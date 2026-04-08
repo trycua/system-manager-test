@@ -135,7 +135,10 @@ let
 
   setupCuaApi = pkgs.writeShellScript "setup-cua-api" ''
     set -e
-    export PATH="${mkPath (with pkgs; [ coreutils python3 bash gnugrep curl ])}:$PATH"
+    export PATH="${mkPath (with pkgs; [ coreutils python3 bash gnugrep curl gcc gnumake ])}:$PATH"
+
+    # evdev needs kernel headers to build
+    export C_INCLUDE_PATH="${pkgs.linuxHeaders}/include"
 
     # Check if venv exists AND has computer_server installed
     if /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
