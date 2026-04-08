@@ -114,7 +114,7 @@ let
 
   startComputerServer = pkgs.writeShellScript "start-computer-server" ''
     set -e
-    export PATH="${mkPath [ pkgs.coreutils pkgs.xorg.xdpyinfo pkgs.bash ]}:$PATH"
+    export PATH="${mkPath [ pkgs.coreutils pkgs.xorg.xdpyinfo pkgs.xorg.xset pkgs.xorg.xrandr pkgs.xdotool pkgs.xclip pkgs.scrot pkgs.bash ]}:$PATH"
 
     # Source credentials
     if [ -f /etc/cua/env ]; then
