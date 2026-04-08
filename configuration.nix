@@ -15,6 +15,8 @@ let
     dbus
     xorg.xset
     xorg.xdpyinfo
+    xorg.xinit       # needed by tigervnc vncserver wrapper
+    xorg.xauth
     xfce.xfce4-session
     xfce.xfwm4
     xfce.xfce4-panel
@@ -114,10 +116,14 @@ let
     set -e
     export PATH="${mkPath (with pkgs; [ coreutils python3 bash gnugrep curl ])}:$PATH"
 
-    if [ -f /opt/cua/venv/bin/python ]; then
-      echo "CUA API venv already exists, skipping setup"
+    # Check if venv exists AND has computer_server installed
+    if /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
+      echo "CUA API venv already set up, skipping"
       exit 0
     fi
+
+    # Remove broken venv if it exists
+    rm -rf /opt/cua/venv
 
     echo "Setting up CUA API server..."
     mkdir -p /opt/cua
