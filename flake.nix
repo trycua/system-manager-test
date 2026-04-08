@@ -18,13 +18,17 @@
   };
 
   outputs = { self, nixpkgs, system-manager, comin, novnc-src, ... }:
-  {
-    systemConfigs.system-manager-test = system-manager.lib.makeSystemConfig {
+  let
+    mkConfig = hostPlatform: system-manager.lib.makeSystemConfig {
       modules = [
+        ({ ... }: { nixpkgs.hostPlatform = hostPlatform; })
         comin.systemManagerModules.comin
         { _module.args.novnc-src = novnc-src; }
         ./configuration.nix
       ];
     };
+  in {
+    systemConfigs.system-manager-test = mkConfig "x86_64-linux";
+    systemConfigs.system-manager-test-arm = mkConfig "aarch64-linux";
   };
 }
