@@ -226,7 +226,7 @@ let
 
 in
 {
-  nixpkgs.hostPlatform = "aarch64-linux";
+  # nixpkgs.hostPlatform set by flake.nix per-system
 
   # ---------------------------------------------------------------------------
   # Comin – GitOps pull deployment

@@ -21,7 +21,7 @@
   let
     mkConfig = hostPlatform: system-manager.lib.makeSystemConfig {
       modules = [
-        ({ ... }: { nixpkgs.hostPlatform = hostPlatform; })
+        ({ lib, ... }: { nixpkgs.hostPlatform = lib.mkForce hostPlatform; })
         comin.systemManagerModules.comin
         { _module.args.novnc-src = novnc-src; }
         ./configuration.nix
