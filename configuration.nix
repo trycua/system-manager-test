@@ -1,5 +1,7 @@
 { pkgs, lib, ... }:
 {
+  nixpkgs.hostPlatform = "aarch64-linux";
+
   services.comin = {
     enable = true;
     hostname = "system-manager-test";
