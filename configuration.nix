@@ -65,8 +65,9 @@ let
     echo "$VNC_PW" | ${pkgs.tigervnc}/bin/vncpasswd -f > /home/cua/.vnc/passwd
     chmod 0600 /home/cua/.vnc/passwd
 
-    # Generate xauth cookie
-    ${pkgs.xorg.xauth}/bin/xauth -f /home/cua/.Xauthority generate :1 . trusted
+    # Generate xauth cookie (use xauth add + mcookie; xauth generate needs a running display)
+    COOKIE=$(${pkgs.util-linux}/bin/mcookie)
+    ${pkgs.xorg.xauth}/bin/xauth -f /home/cua/.Xauthority add :1 . "$COOKIE"
 
     # Launch the desktop session in background after Xvnc starts
     (
