@@ -44,6 +44,7 @@ let
   startVnc = pkgs.writeShellScript "start-vnc" ''
     set -e
     export PATH="${mkPath desktopDeps}:$PATH"
+    export HOME=/home/cua
 
     # Source credentials
     if [ -f /etc/cua/env ]; then
@@ -61,16 +62,32 @@ let
 
     # Create VNC password file
     mkdir -p /home/cua/.vnc
-    echo "$VNC_PW" | vncpasswd -f > /home/cua/.vnc/passwd
+    echo "$VNC_PW" | ${pkgs.tigervnc}/bin/vncpasswd -f > /home/cua/.vnc/passwd
     chmod 0600 /home/cua/.vnc/passwd
 
-    # Start VNC server
-    vncserver :1 \
-      -xstartup ${xstartup} \
+    # Generate xauth cookie
+    ${pkgs.xorg.xauth}/bin/xauth -f /home/cua/.Xauthority generate :1 . trusted
+
+    # Launch the desktop session in background after Xvnc starts
+    (
+      # Wait for X server to start
+      for i in $(seq 1 10); do
+        if ${pkgs.xorg.xdpyinfo}/bin/xdpyinfo -display :1 >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+      export DISPLAY=:1
+      ${xstartup}
+    ) &
+
+    # Start Xvnc in foreground (Type=simple keeps this as the main process)
+    exec ${pkgs.tigervnc}/bin/Xvnc :1 \
       -geometry ''${VNC_RESOLUTION:-1024x768} \
       -depth ''${VNC_COL_DEPTH:-24} \
       -rfbport 5901 \
-      -localhost no \
+      -rfbauth /home/cua/.vnc/passwd \
+      -localhost 0 \
       -SecurityTypes VncAuth \
       -AlwaysShared \
       -AcceptPointerEvents \
@@ -80,8 +97,11 @@ let
   '';
 
   stopVnc = pkgs.writeShellScript "stop-vnc" ''
-    export PATH="${mkPath desktopDeps}:$PATH"
-    vncserver -kill :1 || true
+    if [ -f /tmp/.xvnc.pid ]; then
+      kill $(cat /tmp/.xvnc.pid) 2>/dev/null || true
+      rm -f /tmp/.xvnc.pid
+    fi
+    rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
   '';
 
   startNovnc = pkgs.writeShellScript "start-novnc" ''
@@ -354,7 +374,7 @@ in
     after = [ "network.target" "cua-user-setup.service" ];
     requires = [ "cua-user-setup.service" ];
     serviceConfig = {
-      Type = "forking";
+      Type = "simple";
       User = "cua";
       Group = "cua";
       EnvironmentFile = "/etc/cua/env";
