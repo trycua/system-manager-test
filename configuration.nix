@@ -123,9 +123,9 @@ let
     mkdir -p /opt/cua
     python3 -m venv /opt/cua/venv
     /opt/cua/venv/bin/pip install --upgrade pip uv
-    /opt/cua/venv/bin/uv pip install cua-computer-server "cua-agent[all]" || {
+    /opt/cua/venv/bin/uv pip install --python /opt/cua/venv/bin/python cua-computer-server "cua-agent[all]" || {
       echo "WARNING: Full install failed, trying minimal install"
-      /opt/cua/venv/bin/uv pip install cua-computer-server || true
+      /opt/cua/venv/bin/uv pip install --python /opt/cua/venv/bin/python cua-computer-server || true
     }
 
     chown -R cua:cua /opt/cua
@@ -279,7 +279,7 @@ in
         VNC_COL_DEPTH=24
         CUA_API_KEY=test-api-key-for-development
       '';
-      mode = "0600";
+      mode = "0644";
     };
 
     # XFCE session config
@@ -351,6 +351,7 @@ in
       Type = "forking";
       User = "cua";
       Group = "cua";
+      EnvironmentFile = "/etc/cua/env";
       ExecStart = startVnc;
       ExecStop = stopVnc;
       Restart = "on-failure";
@@ -363,6 +364,7 @@ in
     description = "CUA noVNC Web Client (port 6901)";
     after = [ "cua-vnc.service" ];
     requires = [ "cua-vnc.service" ];
+    startLimitIntervalSec = 0;
     serviceConfig = {
       Type = "simple";
       User = "cua";
@@ -370,7 +372,6 @@ in
       ExecStart = startNovnc;
       Restart = "always";
       RestartSec = 5;
-      StartLimitIntervalSec = 0;
     };
     wantedBy = [ "system-manager.target" ];
   };
