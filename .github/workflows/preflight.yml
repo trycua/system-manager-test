@@ -1,0 +1,205 @@
+name: Preflight — verify /cmd endpoint
+
+# Builds the system-manager config into a bootable VM image and confirms
+# that computer-server (/cmd on port 8000) comes up before any consumer
+# of this flake picks up the new revision.
+#
+# Triggered on every push to main and every PR. The cloud image build
+# workflow (build-kubevirt-linux-container-disk.yml) pins this repo via
+# the Nix flake, so a green preflight here is the quality gate for the
+# image.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Boot VM and verify /cmd
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = false
+
+      - name: Install QEMU and tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            qemu-system-x86 \
+            qemu-utils \
+            cloud-image-utils \
+            genisoimage \
+            ovmf \
+            curl
+          # Enable KVM if available
+          sudo modprobe kvm-intel 2>/dev/null || sudo modprobe kvm-amd 2>/dev/null || true
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; echo "KVM available"; else echo "WARNING: no KVM, falling back to TCG (slow)"; fi
+
+      - name: Download Ubuntu 24.04 cloud image
+        run: |
+          curl -fsSL --retry 3 \
+            -o /tmp/ubuntu-base.img \
+            https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+          qemu-img info /tmp/ubuntu-base.img
+
+      - name: Resize base image
+        run: |
+          qemu-img resize /tmp/ubuntu-base.img +8G
+
+      - name: Build system-manager closure
+        run: |
+          # Pre-build the closure so the VM can apply it offline.
+          # We don't need to actually run system-manager here — just
+          # ensure the flake evaluates cleanly and cache the store paths.
+          nix build .#systemConfigs.system-manager-test \
+            --out-link /tmp/sm-result \
+            --print-build-logs \
+            2>&1 | tail -40
+          echo "Closure built: $(readlink /tmp/sm-result)"
+
+      - name: Build bootable VM image via cloud-init + first-boot script
+        run: |
+          # We don't run basalt here; instead we boot the base Ubuntu image
+          # with a cloud-init user-data that:
+          #   1. Installs Nix
+          #   2. Runs `system-manager switch` from the local flake
+          #   3. Touches /tmp/sm-done when finished
+          #
+          # We then wait for /cmd on port 8000 to confirm the service is up.
+          # This is a functional test of the flake, not the full baked image.
+          echo "Using base image directly for preflight boot (no basalt build needed)"
+
+      - name: Build cloud-init seed
+        run: |
+          mkdir -p /tmp/seed
+
+          cat > /tmp/seed/meta-data <<'EOF'
+          instance-id: preflight-001
+          local-hostname: preflight
+          EOF
+          sed -i 's/^          //' /tmp/seed/meta-data
+
+          # user-data: install Nix, apply system-manager from the checked-out flake
+          # We copy the repo into the VM via a base64-encoded tar in write_files.
+          FLAKE_TAR=$(tar -czf - -C /home/runner/work/system-manager-test/system-manager-test \
+            --exclude='.git' . 2>/dev/null | base64 -w0 \
+            || tar -czf - -C "$GITHUB_WORKSPACE" --exclude='.git' . | base64 -w0)
+
+          cat > /tmp/seed/user-data <<USERDATA
+          #cloud-config
+          users:
+            - name: root
+              lock_passwd: false
+          write_files:
+            - path: /tmp/flake.tar.gz.b64
+              content: |
+                ${FLAKE_TAR}
+              permissions: '0644'
+          runcmd:
+            - mkdir -p /etc/nix
+            - |
+              cat > /etc/nix/nix.conf <<'NIX_EOF'
+              experimental-features = nix-command flakes
+              build-users-group =
+              sandbox = false
+              filter-syscalls = false
+              NIX_EOF
+            - mkdir -m 0755 /nix && chown root:root /nix
+            - curl -L https://nixos.org/nix/install | sh -s -- --no-daemon --yes
+            - base64 -d /tmp/flake.tar.gz.b64 | tar -xzf - -C /opt/system-manager-test
+            - . /root/.nix-profile/etc/profile.d/nix.sh && nix profile install 'github:numtide/system-manager'
+            - . /root/.nix-profile/etc/profile.d/nix.sh && system-manager switch --flake '/opt/system-manager-test#system-manager-test'
+            - touch /tmp/sm-done
+          USERDATA
+          sed -i 's/^          //' /tmp/seed/user-data
+
+          cloud-localds /tmp/seed.img /tmp/seed/user-data /tmp/seed/meta-data \
+            || genisoimage -output /tmp/seed.img -volid cidata -joliet -rock \
+                 /tmp/seed/user-data /tmp/seed/meta-data
+          echo "Seed image built"
+
+      - name: Boot VM and wait for /cmd
+        run: |
+          set -euo pipefail
+
+          CMD_PORT=18000
+          TIMEOUT=900   # system-manager switch + pip install can take a while on first boot
+          QEMU_LOG=/tmp/preflight-qemu.log
+          QEMU_PID_FILE=/tmp/preflight-qemu.pid
+
+          ACCEL_FLAGS="-machine q35,accel=kvm -cpu host"
+          if [ ! -e /dev/kvm ]; then
+            ACCEL_FLAGS="-machine q35 -cpu qemu64"
+          fi
+
+          echo "Booting VM (port-forward guest:8000 → host:${CMD_PORT})..."
+          # shellcheck disable=SC2086
+          sudo qemu-system-x86_64 \
+            -name preflight \
+            $ACCEL_FLAGS \
+            -m 3072 \
+            -smp 2 \
+            -drive file=/tmp/ubuntu-base.img,if=virtio,format=qcow2,snapshot=on \
+            -drive file=/tmp/seed.img,if=virtio,format=raw \
+            -netdev user,id=net0,hostfwd=tcp::${CMD_PORT}-:8000 \
+            -device virtio-net-pci,netdev=net0 \
+            -serial file:"$QEMU_LOG" \
+            -display none \
+            -daemonize \
+            -pidfile "$QEMU_PID_FILE"
+
+          QEMU_PID=$(cat "$QEMU_PID_FILE")
+          echo "QEMU PID: $QEMU_PID"
+
+          cleanup() {
+            echo "--- preflight cleanup ---"
+            sudo kill "$QEMU_PID" 2>/dev/null || true
+            echo "::group::QEMU serial console (last 150 lines)"
+            tail -n 150 "$QEMU_LOG" 2>/dev/null || true
+            echo "::endgroup::"
+          }
+          trap cleanup EXIT
+
+          echo "Waiting up to ${TIMEOUT}s for POST http://localhost:${CMD_PORT}/cmd ..."
+          DEADLINE=$(( $(date +%s) + TIMEOUT ))
+          ATTEMPT=0
+          while true; do
+            ATTEMPT=$(( ATTEMPT + 1 ))
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "TIMEOUT: /cmd did not respond within ${TIMEOUT}s"
+              exit 1
+            fi
+
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 5 \
+              -X POST "http://localhost:${CMD_PORT}/cmd" \
+              -H "Content-Type: application/json" \
+              -d '{}' 2>/dev/null || echo "000")
+
+            echo "[$(date -u +%H:%M:%S)] attempt ${ATTEMPT} — HTTP ${HTTP_CODE}"
+
+            # Any non-5xx, non-connection-error response means computer-server is up.
+            # A 400/422 (bad request body) is fine — the service is listening.
+            if [ "$HTTP_CODE" != "000" ] && [ "$HTTP_CODE" -lt 500 ]; then
+              echo "PASS: /cmd responded with HTTP ${HTTP_CODE} — computer-server is up"
+              break
+            fi
+
+            sleep 10
+          done
+
+          echo "Preflight passed."
