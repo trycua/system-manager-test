@@ -153,8 +153,8 @@ let
     mkdir -p /opt/cua
     python3 -m venv /opt/cua/venv
     /opt/cua/venv/bin/pip install --upgrade pip uv
-    /opt/cua/venv/bin/uv pip install --python /opt/cua/venv/bin/python cua-computer-server "cua-agent[all]" || {
-      echo "WARNING: Full install failed, trying minimal install"
+    /opt/cua/venv/bin/uv pip install --python /opt/cua/venv/bin/python cua-computer-server || {
+      echo "WARNING: install failed"
       /opt/cua/venv/bin/uv pip install --python /opt/cua/venv/bin/python cua-computer-server || true
     }
 
