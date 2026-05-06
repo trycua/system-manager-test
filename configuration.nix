@@ -140,32 +140,12 @@ let
     # evdev needs kernel headers to build
     export C_INCLUDE_PATH="${pkgs.linuxHeaders}/include"
 
-    # Fast path: if the venv has computer_server installed, skip entirely.
-    # Use the venv's own python to avoid PATH/library mismatches.
-    if [ -x /opt/cua/venv/bin/python ] && /opt/cua/venv/bin/python -c 'import computer_server' 2>&1; then
-      echo "CUA API venv already set up, skipping"
+    # Fast path: check if the package is installed using pip show (not import,
+    # which fails because __init__.py loads .linux native deps that need X11
+    # libraries only available in the cua-api service environment).
+    if [ -x /opt/cua/venv/bin/pip ] && /opt/cua/venv/bin/pip show cua-computer-server >/dev/null 2>&1; then
+      echo "CUA API venv already set up (pip show confirms cua-computer-server), skipping"
       exit 0
-    fi
-
-    # Log why the import failed so we can diagnose
-    if [ -x /opt/cua/venv/bin/python ]; then
-      echo "Import check failed. Diagnostics:"
-      echo "  venv python: $(/opt/cua/venv/bin/python --version 2>&1)"
-      echo "  system python: $(python3 --version 2>&1)"
-      /opt/cua/venv/bin/python -c 'import computer_server' 2>&1 || true
-    fi
-
-    # If venv exists but import failed, try an in-place repair before nuking.
-    if [ -d /opt/cua/venv ] && [ -x /opt/cua/venv/bin/pip ]; then
-      echo "Venv exists but computer_server import failed — attempting in-place repair..."
-      /opt/cua/venv/bin/pip install cua-computer-server && {
-        if /opt/cua/venv/bin/python -c 'import computer_server' 2>&1; then
-          echo "Repair succeeded, skipping full reinstall"
-          chown -R cua:cua /opt/cua
-          exit 0
-        fi
-      }
-      echo "Repair failed, falling through to full reinstall"
     fi
 
     # Full reinstall as last resort
