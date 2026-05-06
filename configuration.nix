@@ -142,16 +142,24 @@ let
 
     # Fast path: if the venv has computer_server installed, skip entirely.
     # Use the venv's own python to avoid PATH/library mismatches.
-    if [ -x /opt/cua/venv/bin/python ] && /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
+    if [ -x /opt/cua/venv/bin/python ] && /opt/cua/venv/bin/python -c 'import computer_server' 2>&1; then
       echo "CUA API venv already set up, skipping"
       exit 0
+    fi
+
+    # Log why the import failed so we can diagnose
+    if [ -x /opt/cua/venv/bin/python ]; then
+      echo "Import check failed. Diagnostics:"
+      echo "  venv python: $(/opt/cua/venv/bin/python --version 2>&1)"
+      echo "  system python: $(python3 --version 2>&1)"
+      /opt/cua/venv/bin/python -c 'import computer_server' 2>&1 || true
     fi
 
     # If venv exists but import failed, try an in-place repair before nuking.
     if [ -d /opt/cua/venv ] && [ -x /opt/cua/venv/bin/pip ]; then
       echo "Venv exists but computer_server import failed — attempting in-place repair..."
-      /opt/cua/venv/bin/pip install cua-computer-server 2>/dev/null && {
-        if /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
+      /opt/cua/venv/bin/pip install cua-computer-server && {
+        if /opt/cua/venv/bin/python -c 'import computer_server' 2>&1; then
           echo "Repair succeeded, skipping full reinstall"
           chown -R cua:cua /opt/cua
           exit 0
