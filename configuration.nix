@@ -140,13 +140,27 @@ let
     # evdev needs kernel headers to build
     export C_INCLUDE_PATH="${pkgs.linuxHeaders}/include"
 
-    # Check if venv exists AND has computer_server installed
-    if /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
+    # Fast path: if the venv has computer_server installed, skip entirely.
+    # Use the venv's own python to avoid PATH/library mismatches.
+    if [ -x /opt/cua/venv/bin/python ] && /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
       echo "CUA API venv already set up, skipping"
       exit 0
     fi
 
-    # Remove broken venv if it exists
+    # If venv exists but import failed, try an in-place repair before nuking.
+    if [ -d /opt/cua/venv ] && [ -x /opt/cua/venv/bin/pip ]; then
+      echo "Venv exists but computer_server import failed — attempting in-place repair..."
+      /opt/cua/venv/bin/pip install cua-computer-server 2>/dev/null && {
+        if /opt/cua/venv/bin/python -c 'import computer_server' 2>/dev/null; then
+          echo "Repair succeeded, skipping full reinstall"
+          chown -R cua:cua /opt/cua
+          exit 0
+        fi
+      }
+      echo "Repair failed, falling through to full reinstall"
+    fi
+
+    # Full reinstall as last resort
     rm -rf /opt/cua/venv
 
     echo "Setting up CUA API server..."
